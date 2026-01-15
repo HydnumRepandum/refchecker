@@ -63,13 +63,14 @@ from refchecker.core.db_connection_pool import ThreadSafeLocalChecker
 from refchecker.__version__ import __version__
 from refchecker.llm.base import create_llm_provider, ReferenceExtractor
 
-def get_llm_api_key_interactive(provider: str) -> str:
+def get_llm_api_key_interactive(provider: str, endpoint: str = None) -> str:
     """
     Get API key for LLM provider, checking environment variables first,
     then prompting interactively if not found.
     
     Args:
         provider: LLM provider name (openai, anthropic, google, azure, vllm)
+        endpoint: Optional custom endpoint
     
     Returns:
         API key string or None if not available
@@ -86,6 +87,18 @@ def get_llm_api_key_interactive(provider: str) -> str:
     # vLLM doesn't need an API key
     if provider == 'vllm':
         return None
+
+    # check if we have an endpoint and provider is openai (common for local LLMs)
+    # in this case we can skip the key check
+    if endpoint and provider == 'openai':
+        # Check environment variables first but don't error/prompt if missing
+        for env_var in env_vars.get(provider, []):
+            api_key = os.getenv(env_var)
+            if api_key:
+                logging.debug(f"Using {provider} API key from environment variable {env_var}")
+                return api_key
+        # Return dummy key for local endpoints
+        return "dummy-key-for-local-model"
     
     # Check environment variables first
     for env_var in env_vars.get(provider, []):
@@ -5776,7 +5789,7 @@ def main():
     llm_config = None
     if args.llm_provider:
         # Get API key interactively if needed for LLM provider
-        api_key = get_llm_api_key_interactive(args.llm_provider)
+        api_key = get_llm_api_key_interactive(args.llm_provider, args.llm_endpoint)
         if api_key is None and args.llm_provider != 'vllm':
             print(f"Error: API key is required for {args.llm_provider} provider.")
             return 1

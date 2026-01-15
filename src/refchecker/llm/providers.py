@@ -182,12 +182,21 @@ class OpenAIProvider(LLMProvider, LLMProviderMixin):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.api_key = config.get("api_key") or os.getenv("REFCHECKER_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.endpoint = config.get("endpoint") or os.getenv("REFCHECKER_OPENAI_ENDPOINT") or os.getenv("OPENAI_API_BASE")
         self.client = None
         
+        # for local providers like Ollama, api_key might not be needed, but openai client requires one
+        if not self.api_key and self.endpoint:
+            self.api_key = "dummy"
+
         if self.api_key:
             try:
                 import openai
-                self.client = openai.OpenAI(api_key=self.api_key)
+                client_args = {"api_key": self.api_key}
+                if self.endpoint:
+                    client_args["base_url"] = self.endpoint
+                    
+                self.client = openai.OpenAI(**client_args)
             except ImportError:
                 logger.error("OpenAI library not installed. Install with: pip install openai")
     
@@ -204,14 +213,30 @@ class OpenAIProvider(LLMProvider, LLMProviderMixin):
     def _call_llm(self, prompt: str) -> str:
         """Make the actual OpenAI API call and return the response text"""
         try:
-            response = self.client.chat.completions.create(
-                model=self.model or "gpt-4.1",
-                messages=[
+            # Determine which parameter to use for max tokens based on model name
+            # Newer models like o1- and gpt-5- use max_completion_tokens
+            max_tokens_param = "max_tokens"
+            model_name = self.model or "gpt-4.1"
+            temperature = self.temperature
+            
+            if model_name.startswith(("o1-", "gpt-5")):
+                max_tokens_param = "max_completion_tokens"
+                # These models only support default temperature of 1
+                temperature = 1.0
+            
+            # Prepare arguments
+            kwargs = {
+                "model": model_name,
+                "messages": [
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+                "temperature": temperature
+            }
+            
+            # Add the appropriate max tokens parameter
+            kwargs[max_tokens_param] = self.max_tokens
+
+            response = self.client.chat.completions.create(**kwargs)
             
             return response.choices[0].message.content or ""
             
